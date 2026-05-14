@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CVC Flight Price Crawler</title>
+  <style>
+    :root {
+      --cvc-blue: #003b95;
+      --cvc-yellow: #ffcc00;
+      --bg: #f4f7fb;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--text);
+      background: linear-gradient(135deg, #eef5ff 0%, #ffffff 55%, #fff8d6 100%);
+      min-height: 100vh;
+    }
+
+    header {
+      background: var(--cvc-blue);
+      color: white;
+      padding: 32px 24px;
+      border-bottom: 6px solid var(--cvc-yellow);
+    }
+
+    .container {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 32px 24px;
+    }
+
+    .hero {
+      display: grid;
+      gap: 16px;
+    }
+
+    .eyebrow {
+      color: var(--cvc-yellow);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      font-size: 13px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(32px, 5vw, 56px);
+      line-height: 1.05;
+    }
+
+    .subtitle {
+      margin: 0;
+      max-width: 760px;
+      color: #dbeafe;
+      font-size: 18px;
+      line-height: 1.6;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 18px;
+      margin-top: 24px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 22px;
+      box-shadow: 0 12px 28px rgba(15, 23, 42, .08);
+    }
+
+    .card h2 {
+      margin: 0 0 8px;
+      color: var(--cvc-blue);
+      font-size: 20px;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .status {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      padding: 10px 14px;
+      background: #ecfdf5;
+      color: #047857;
+      border-radius: 999px;
+      font-weight: 700;
+      margin-top: 16px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 14px;
+      background: white;
+      margin-top: 16px;
+    }
+
+    th, td {
+      padding: 14px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+    }
+
+    th {
+      background: #f8fafc;
+      color: #334155;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    .note {
+      margin-top: 18px;
+      padding: 16px;
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+      color: #9a3412;
+      border-radius: 14px;
+      line-height: 1.5;
+    }
+
+    code {
+      background: #f1f5f9;
+      border-radius: 6px;
+      padding: 2px 6px;
+    }
+
+    footer {
+      color: var(--muted);
+      font-size: 14px;
+      padding-bottom: 32px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container hero">
+      <div class="eyebrow">CVC Flight Price Crawler</div>
+      <h1>Monitor de tarifas aéreas</h1>
+      <p class="subtitle">
+        Front estático publicado via GitHub Pages para acompanhar o projeto do crawler de ofertas aéreas.
+      </p>
+      <div class="status">● Front publicado</div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="grid">
+      <article class="card">
+        <h2>API</h2>
+        <p>Backend FastAPI com endpoints <code>/health</code>, <code>/feed</code> e <code>/feed/latest</code>.</p>
+      </article>
+      <article class="card">
+        <h2>Crawler</h2>
+        <p>Coleta baseada em Python, Playwright e parser HTML ajustável por seletores.</p>
+      </article>
+      <article class="card">
+        <h2>Scheduler</h2>
+        <p>Execução periódica preparada com APScheduler para automatizar a coleta.</p>
+      </article>
+    </section>
+
+    <section class="card" style="margin-top: 24px;">
+      <h2>Feed de ofertas</h2>
+      <p>Área reservada para exibição dos dados coletados pela API.</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Origem</th>
+            <th>Destino</th>
+            <th>Ida</th>
+            <th>Volta</th>
+            <th>Preço</th>
+            <th>Fonte</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td colspan="6">Nenhum dado carregado. Conecte a API em produção para popular este feed.</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="note">
+        Importante: GitHub Pages hospeda apenas conteúdo estático. A API FastAPI precisa estar publicada em um serviço separado, como Render, Railway, Fly.io, Cloud Run ou outro servidor.
+      </div>
+    </section>
+  </main>
+
+  <footer class="container">
+    Projeto CVC Flight Price Crawler · GitHub Pages
+  </footer>
+</body>
+</html>
