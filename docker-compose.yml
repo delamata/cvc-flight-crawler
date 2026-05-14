@@ -1,0 +1,16 @@
+services:
+  api:
+    build: .
+    container_name: cvc-flight-crawler-api
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+
+  scheduler:
+    build: .
+    container_name: cvc-flight-crawler-scheduler
+    env_file:
+      - .env
+    command: python scheduler/job.py
