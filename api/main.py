@@ -23,6 +23,39 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+DEMO_OFFERS = [
+    FlightOffer(
+        origin="SAO",
+        destination="RIO",
+        departure_date="2026-06-15",
+        return_date="2026-06-20",
+        price=489.90,
+        currency="BRL",
+        source_site="Demonstração",
+        source_url="https://www.cvc.com.br",
+    ),
+    FlightOffer(
+        origin="SAO",
+        destination="SSA",
+        departure_date="2026-07-10",
+        return_date="2026-07-17",
+        price=899.90,
+        currency="BRL",
+        source_site="Demonstração",
+        source_url="https://www.cvc.com.br",
+    ),
+    FlightOffer(
+        origin="BSB",
+        destination="REC",
+        departure_date="2026-08-05",
+        return_date="2026-08-12",
+        price=749.90,
+        currency="BRL",
+        source_site="Demonstração",
+        source_url="https://www.cvc.com.br",
+    ),
+]
+
 
 @app.get("/health")
 async def health() -> dict[str, str]:
@@ -33,17 +66,19 @@ async def health() -> dict[str, str]:
 async def feed() -> list[FlightOffer]:
     """Retorna o feed consolidado.
 
-    Scaffold inicial: substituir por consulta ao banco de dados na próxima etapa.
+    MVP inicial: retorna dados de demonstração para validar integração front + API.
+    Na próxima etapa, este endpoint deve consultar o banco de dados.
     """
 
-    return []
+    return DEMO_OFFERS
 
 
 @app.get("/feed/latest", response_model=list[FlightOffer])
 async def latest_feed() -> list[FlightOffer]:
     """Retorna as ofertas mais recentes.
 
-    Scaffold inicial: substituir por consulta ao banco de dados na próxima etapa.
+    MVP inicial: retorna dados de demonstração para validar integração front + API.
+    Na próxima etapa, este endpoint deve consultar o banco de dados.
     """
 
-    return []
+    return DEMO_OFFERS
