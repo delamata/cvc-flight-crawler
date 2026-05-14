@@ -1,13 +1,15 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from crawler.config import get_settings
 from crawler.database import init_db
 from crawler.models import FlightOffer
-from crawler.repository import get_latest_offers
+from crawler.repository import get_latest_offers, save_offers
+from crawler.runner import collect_offers
 
 app = FastAPI(
     title="CVC Flight Price Crawler",
-    version="0.2.0",
+    version="0.3.0",
     description="API para consulta de ofertas aéreas coletadas pelo crawler.",
 )
 
@@ -26,6 +28,30 @@ app.add_middleware(
 )
 
 
+def verify_admin_key(
+    x_api_key: str | None = Header(default=None),
+    api_key: str | None = Query(default=None),
+) -> None:
+    """Protege endpoints administrativos com API_SECRET_KEY.
+
+    Preferência: enviar a chave no header `x-api-key`.
+    Alternativa: usar query param `?api_key=...` para serviços de cron simples.
+    """
+
+    settings = get_settings()
+    expected_key = settings.api_secret_key
+    provided_key = x_api_key or api_key
+
+    if not expected_key or expected_key == "troque_esta_chave_em_producao":
+        raise HTTPException(
+            status_code=500,
+            detail="API_SECRET_KEY não configurada no ambiente de produção.",
+        )
+
+    if provided_key != expected_key:
+        raise HTTPException(status_code=401, detail="Chave administrativa inválida.")
+
+
 @app.on_event("startup")
 async def startup() -> None:
     await init_db()
@@ -34,6 +60,24 @@ async def startup() -> None:
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/admin/collect", dependencies=[Depends(verify_admin_key)])
+async def collect_now() -> dict[str, int | str]:
+    """Dispara uma coleta manual e grava o resultado no banco.
+
+    Este endpoint substitui temporariamente o Background Worker pago.
+    Pode ser chamado manualmente ou por um serviço externo de cron.
+    """
+
+    offers = await collect_offers()
+    saved = await save_offers(offers)
+
+    return {
+        "status": "ok",
+        "collected": len(offers),
+        "saved": saved,
+    }
 
 
 @app.get("/feed", response_model=list[FlightOffer])
