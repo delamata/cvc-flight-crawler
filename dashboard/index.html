@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CVC Flight Feed</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; color: #1f2937; }
+    main { max-width: 960px; margin: 0 auto; }
+    h1 { color: #003b95; }
+    table { width: 100%; border-collapse: collapse; margin-top: 24px; }
+    th, td { border: 1px solid #e5e7eb; padding: 10px; text-align: left; }
+    th { background: #f3f4f6; }
+    .status { padding: 12px; background: #eef6ff; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>CVC Flight Feed</h1>
+    <p class="status">Dashboard inicial para visualização do feed coletado pela API.</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Origem</th>
+          <th>Destino</th>
+          <th>Ida</th>
+          <th>Volta</th>
+          <th>Preço</th>
+          <th>Fonte</th>
+        </tr>
+      </thead>
+      <tbody id="feed-body">
+        <tr><td colspan="6">Nenhum dado carregado.</td></tr>
+      </tbody>
+    </table>
+  </main>
+</body>
+</html>
