@@ -13,6 +13,12 @@
       --text: #1f2937;
       --muted: #6b7280;
       --border: #e5e7eb;
+      --success-bg: #ecfdf5;
+      --success-text: #047857;
+      --warning-bg: #fff7ed;
+      --warning-text: #9a3412;
+      --error-bg: #fef2f2;
+      --error-text: #b91c1c;
     }
 
     * { box-sizing: border-box; }
@@ -38,10 +44,7 @@
       padding: 32px 24px;
     }
 
-    .hero {
-      display: grid;
-      gap: 16px;
-    }
+    .hero { display: grid; gap: 16px; }
 
     .eyebrow {
       color: var(--cvc-yellow);
@@ -97,12 +100,34 @@
       gap: 8px;
       align-items: center;
       padding: 10px 14px;
-      background: #ecfdf5;
-      color: #047857;
+      background: var(--success-bg);
+      color: var(--success-text);
       border-radius: 999px;
       font-weight: 700;
       margin-top: 16px;
+      width: fit-content;
     }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+
+    .button {
+      border: 0;
+      border-radius: 999px;
+      padding: 11px 16px;
+      background: var(--cvc-blue);
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .button:hover { opacity: .92; }
 
     table {
       width: 100%;
@@ -117,6 +142,7 @@
       padding: 14px;
       border-bottom: 1px solid var(--border);
       text-align: left;
+      vertical-align: top;
     }
 
     th {
@@ -130,11 +156,17 @@
     .note {
       margin-top: 18px;
       padding: 16px;
-      background: #fff7ed;
+      background: var(--warning-bg);
       border: 1px solid #fed7aa;
-      color: #9a3412;
+      color: var(--warning-text);
       border-radius: 14px;
       line-height: 1.5;
+    }
+
+    .error {
+      background: var(--error-bg);
+      border-color: #fecaca;
+      color: var(--error-text);
     }
 
     code {
@@ -156,9 +188,9 @@
       <div class="eyebrow">CVC Flight Price Crawler</div>
       <h1>Monitor de tarifas aéreas</h1>
       <p class="subtitle">
-        Front estático publicado via GitHub Pages para acompanhar o projeto do crawler de ofertas aéreas.
+        Front estático publicado via GitHub Pages, conectado à API FastAPI publicada no Render.
       </p>
-      <div class="status">● Front publicado</div>
+      <div class="status" id="api-status">● Verificando API...</div>
     </div>
   </header>
 
@@ -166,7 +198,7 @@
     <section class="grid">
       <article class="card">
         <h2>API</h2>
-        <p>Backend FastAPI com endpoints <code>/health</code>, <code>/feed</code> e <code>/feed/latest</code>.</p>
+        <p>Backend FastAPI publicado no Render com endpoints <code>/health</code>, <code>/feed</code> e <code>/feed/latest</code>.</p>
       </article>
       <article class="card">
         <h2>Crawler</h2>
@@ -180,7 +212,13 @@
 
     <section class="card" style="margin-top: 24px;">
       <h2>Feed de ofertas</h2>
-      <p>Área reservada para exibição dos dados coletados pela API.</p>
+      <p>Dados consumidos do endpoint <code>/feed/latest</code>.</p>
+
+      <div class="toolbar">
+        <span id="feed-message">Carregando dados...</span>
+        <button class="button" type="button" onclick="loadFeed()">Atualizar feed</button>
+      </div>
+
       <table>
         <thead>
           <tr>
@@ -192,14 +230,15 @@
             <th>Fonte</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody id="feed-body">
           <tr>
-            <td colspan="6">Nenhum dado carregado. Conecte a API em produção para popular este feed.</td>
+            <td colspan="6">Carregando...</td>
           </tr>
         </tbody>
       </table>
-      <div class="note">
-        Importante: GitHub Pages hospeda apenas conteúdo estático. A API FastAPI precisa estar publicada em um serviço separado, como Render, Railway, Fly.io, Cloud Run ou outro servidor.
+
+      <div class="note" id="technical-note">
+        API configurada: <code>https://cvc-flight-crawler.onrender.com</code>. Nesta fase, o feed pode retornar vazio até o crawler gravar dados reais.
       </div>
     </section>
   </main>
@@ -207,5 +246,79 @@
   <footer class="container">
     Projeto CVC Flight Price Crawler · GitHub Pages
   </footer>
+
+  <script>
+    const API_BASE_URL = "https://cvc-flight-crawler.onrender.com";
+
+    const statusEl = document.getElementById("api-status");
+    const feedBodyEl = document.getElementById("feed-body");
+    const feedMessageEl = document.getElementById("feed-message");
+    const noteEl = document.getElementById("technical-note");
+
+    function formatPrice(value, currency = "BRL") {
+      if (value === null || value === undefined || value === "") return "-";
+      return new Intl.NumberFormat("pt-BR", {
+        style: "currency",
+        currency
+      }).format(Number(value));
+    }
+
+    function renderRows(items) {
+      if (!items.length) {
+        feedBodyEl.innerHTML = `<tr><td colspan="6">Nenhuma oferta encontrada. O endpoint está funcionando, mas ainda não há dados gravados.</td></tr>`;
+        return;
+      }
+
+      feedBodyEl.innerHTML = items.map(item => `
+        <tr>
+          <td>${item.origin || "-"}</td>
+          <td>${item.destination || "-"}</td>
+          <td>${item.departure_date || "-"}</td>
+          <td>${item.return_date || "-"}</td>
+          <td>${formatPrice(item.price, item.currency || "BRL")}</td>
+          <td>${item.source_url ? `<a href="${item.source_url}" target="_blank" rel="noopener">${item.source_site || "Origem"}</a>` : (item.source_site || "-")}</td>
+        </tr>
+      `).join("");
+    }
+
+    async function checkHealth() {
+      try {
+        const response = await fetch(`${API_BASE_URL}/health`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        statusEl.textContent = data.status === "ok" ? "● API online" : "● API respondeu com alerta";
+        statusEl.style.background = "var(--success-bg)";
+        statusEl.style.color = "var(--success-text)";
+      } catch (error) {
+        statusEl.textContent = "● API offline ou bloqueada";
+        statusEl.style.background = "var(--error-bg)";
+        statusEl.style.color = "var(--error-text)";
+        noteEl.classList.add("error");
+        noteEl.innerHTML = `Falha ao acessar a API em <code>${API_BASE_URL}</code>. Verifique se o serviço Render está ativo e se o CORS foi publicado.`;
+      }
+    }
+
+    async function loadFeed() {
+      feedMessageEl.textContent = "Carregando dados...";
+      feedBodyEl.innerHTML = `<tr><td colspan="6">Carregando...</td></tr>`;
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/feed/latest`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        const items = Array.isArray(data) ? data : [];
+        renderRows(items);
+        feedMessageEl.textContent = `${items.length} oferta(s) carregada(s).`;
+      } catch (error) {
+        feedMessageEl.textContent = "Erro ao carregar feed.";
+        feedBodyEl.innerHTML = `<tr><td colspan="6">Não foi possível carregar o feed da API Render.</td></tr>`;
+        noteEl.classList.add("error");
+        noteEl.innerHTML = `Erro no endpoint <code>${API_BASE_URL}/feed/latest</code>. Detalhe técnico: ${error.message}`;
+      }
+    }
+
+    checkHealth();
+    loadFeed();
+  </script>
 </body>
 </html>
