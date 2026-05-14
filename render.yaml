@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: cvc-flight-crawler
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: cvc-flight-crawler-db
+          property: connectionString
+      - key: CVC_BASE_URL
+        value: https://www.cvc.com.br
+      - key: CRAWLER_INTERVAL_MIN
+        value: 30
+      - key: HEADLESS
+        value: true
+
+  - type: worker
+    name: cvc-flight-crawler-worker
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: python scheduler/job.py
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: cvc-flight-crawler-db
+          property: connectionString
+      - key: CVC_BASE_URL
+        value: https://www.cvc.com.br
+      - key: CRAWLER_INTERVAL_MIN
+        value: 30
+      - key: HEADLESS
+        value: true
+
+databases:
+  - name: cvc-flight-crawler-db
+    plan: free
+    databaseName: cvc_flight_crawler
