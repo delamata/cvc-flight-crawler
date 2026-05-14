@@ -1,11 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from crawler.database import init_db
 from crawler.models import FlightOffer
+from crawler.repository import get_latest_offers
 
 app = FastAPI(
     title="CVC Flight Price Crawler",
-    version="0.1.0",
+    version="0.2.0",
     description="API para consulta de ofertas aéreas coletadas pelo crawler.",
 )
 
@@ -23,38 +25,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DEMO_OFFERS = [
-    FlightOffer(
-        origin="SAO",
-        destination="RIO",
-        departure_date="2026-06-15",
-        return_date="2026-06-20",
-        price=489.90,
-        currency="BRL",
-        source_site="Demonstração",
-        source_url="https://www.cvc.com.br",
-    ),
-    FlightOffer(
-        origin="SAO",
-        destination="SSA",
-        departure_date="2026-07-10",
-        return_date="2026-07-17",
-        price=899.90,
-        currency="BRL",
-        source_site="Demonstração",
-        source_url="https://www.cvc.com.br",
-    ),
-    FlightOffer(
-        origin="BSB",
-        destination="REC",
-        departure_date="2026-08-05",
-        return_date="2026-08-12",
-        price=749.90,
-        currency="BRL",
-        source_site="Demonstração",
-        source_url="https://www.cvc.com.br",
-    ),
-]
+
+@app.on_event("startup")
+async def startup() -> None:
+    await init_db()
 
 
 @app.get("/health")
@@ -64,21 +38,13 @@ async def health() -> dict[str, str]:
 
 @app.get("/feed", response_model=list[FlightOffer])
 async def feed() -> list[FlightOffer]:
-    """Retorna o feed consolidado.
+    """Retorna o feed consolidado a partir do banco de dados."""
 
-    MVP inicial: retorna dados de demonstração para validar integração front + API.
-    Na próxima etapa, este endpoint deve consultar o banco de dados.
-    """
-
-    return DEMO_OFFERS
+    return await get_latest_offers(limit=500)
 
 
 @app.get("/feed/latest", response_model=list[FlightOffer])
 async def latest_feed() -> list[FlightOffer]:
-    """Retorna as ofertas mais recentes.
+    """Retorna as ofertas mais recentes gravadas no banco de dados."""
 
-    MVP inicial: retorna dados de demonstração para validar integração front + API.
-    Na próxima etapa, este endpoint deve consultar o banco de dados.
-    """
-
-    return DEMO_OFFERS
+    return await get_latest_offers(limit=50)
