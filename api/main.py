@@ -1,3 +1,5 @@
+import httpx
+from bs4 import BeautifulSoup
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
@@ -5,10 +7,21 @@ from loguru import logger
 from crawler.config import get_settings
 from crawler.database import init_db
 from crawler.models import FlightOffer
+from crawler.parser import parse_flight_offers
 from crawler.repository import get_latest_offers, save_offers
 from crawler.runner import collect_offers
 
-APP_VERSION = "0.3.3"
+APP_VERSION = "0.3.4"
+
+DEFAULT_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+}
 
 app = FastAPI(
     title="CVC Flight Price Crawler",
@@ -88,6 +101,51 @@ async def collect_now() -> dict[str, int | str]:
         "status": "ok",
         "collected": len(offers),
         "saved": saved,
+    }
+
+
+@app.get("/admin/debug-http", dependencies=[Depends(verify_admin_key)])
+async def debug_http() -> dict[str, object]:
+    """Diagnóstico protegido para validar o HTML recebido no Render."""
+
+    settings = get_settings()
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=settings.request_timeout_sec,
+            follow_redirects=True,
+            headers=DEFAULT_HEADERS,
+        ) as client:
+            response = await client.get(settings.cvc_base_url)
+            html = response.text
+    except Exception as exc:
+        logger.exception("Erro no debug HTTP")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Erro ao baixar página via HTTP.",
+                "error_type": exc.__class__.__name__,
+                "error": str(exc),
+            },
+        ) from exc
+
+    soup = BeautifulSoup(html, "html.parser")
+    lines = [line.strip() for line in soup.get_text("\n").splitlines() if line.strip()]
+    candidates = [
+        line
+        for line in lines
+        if "Aéreo" in line or "Aereo" in line or "Pacote" in line or "Saída" in line or "Saida" in line or "R$" in line
+    ][:100]
+    parsed = parse_flight_offers(html, source_url=str(response.url))
+
+    return {
+        "status_code": response.status_code,
+        "final_url": str(response.url),
+        "html_length": len(html),
+        "text_lines": len(lines),
+        "candidate_lines": len(candidates),
+        "parsed_offers": len(parsed),
+        "sample_candidates": candidates[:30],
     }
 
 
