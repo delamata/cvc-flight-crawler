@@ -39,7 +39,14 @@ def _clean_token(value: str) -> str:
     return token
 
 
+def _nested_value(value: Any, keys: tuple[str, ...]) -> Any:
+    if isinstance(value, dict):
+        return _first_value(value, keys)
+    return value
+
+
 def _normalize_date(value: Any) -> str | None:
+    value = _nested_value(value, ("date", "datetime", "time", "departureDate", "arrivalDate"))
     if not value:
         return None
 
@@ -55,6 +62,7 @@ def _normalize_date(value: Any) -> str | None:
 
 
 def _normalize_iata(value: Any) -> str | None:
+    value = _nested_value(value, ("iata", "code", "airportCode"))
     if not value:
         return None
 
@@ -66,6 +74,7 @@ def _normalize_iata(value: Any) -> str | None:
 
 
 def _normalize_price(value: Any) -> float | None:
+    value = _nested_value(value, ("amount", "total", "value", "price"))
     if value is None:
         return None
 
@@ -80,21 +89,29 @@ def _normalize_price(value: Any) -> float | None:
 
 
 def _extract_offers_from_json(payload: Any) -> list[FlightOffer]:
-    """Extrai ofertas de uma resposta JSON com estrutura ainda variável."""
+    """Extrai ofertas de uma resposta JSON da ConectaAS.
+
+    Suporta estruturas aninhadas como:
+    `departure: {iata, date}` e `arrival: {iata, date}`.
+    """
 
     offers: list[FlightOffer] = []
 
     origin_keys = ("origin", "originCode", "originIata", "departure", "departureCode", "from", "fromIata")
     destination_keys = ("destination", "destinationCode", "destinationIata", "arrival", "arrivalCode", "to", "toIata")
-    departure_keys = ("departureDate", "date", "date1", "outboundDate", "departureTime")
+    departure_keys = ("departureDate", "date", "date1", "outboundDate", "departureTime", "departure")
     return_keys = ("returnDate", "date2", "inboundDate")
     price_keys = ("price", "amount", "total", "totalPrice", "fare", "value")
     currency_keys = ("currency", "currencyCode")
 
     for item in _walk_values(payload):
-        origin = _normalize_iata(_first_value(item, origin_keys))
-        destination = _normalize_iata(_first_value(item, destination_keys))
-        departure_date = _normalize_date(_first_value(item, departure_keys))
+        origin_raw = _first_value(item, origin_keys)
+        destination_raw = _first_value(item, destination_keys)
+        departure_raw = _first_value(item, departure_keys) or origin_raw
+
+        origin = _normalize_iata(origin_raw)
+        destination = _normalize_iata(destination_raw)
+        departure_date = _normalize_date(departure_raw)
         return_date = _normalize_date(_first_value(item, return_keys))
         price = _normalize_price(_first_value(item, price_keys))
         currency = str(_first_value(item, currency_keys) or "BRL").upper()[:3]
