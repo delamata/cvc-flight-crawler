@@ -4,6 +4,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
+from crawler.conectaas import debug_conectaas
 from crawler.config import get_settings
 from crawler.database import init_db
 from crawler.models import FlightOffer
@@ -11,7 +12,7 @@ from crawler.parser import parse_flight_offers
 from crawler.repository import get_latest_offers, save_offers
 from crawler.runner import collect_offers
 
-APP_VERSION = "0.3.5"
+APP_VERSION = "0.4.0"
 
 DEFAULT_HEADERS = {
     "User-Agent": (
@@ -76,6 +77,7 @@ async def health() -> dict[str, str]:
         "status": "ok",
         "version": APP_VERSION,
         "crawler_url": settings.cvc_base_url,
+        "conectaas_enabled": bool(settings.conectaas_url and settings.conectaas_token),
     }
 
 
@@ -102,6 +104,22 @@ async def collect_now() -> dict[str, int | str]:
         "collected": len(offers),
         "saved": saved,
     }
+
+
+@app.get("/admin/debug-conectaas", dependencies=[Depends(verify_admin_key)])
+async def debug_conectaas_endpoint() -> dict[str, object]:
+    try:
+        return await debug_conectaas()
+    except Exception as exc:
+        logger.exception("Erro no debug ConectaAS")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Erro ao consultar ConectaAS.",
+                "error_type": exc.__class__.__name__,
+                "error": str(exc),
+            },
+        ) from exc
 
 
 @app.get("/admin/debug-http", dependencies=[Depends(verify_admin_key)])
