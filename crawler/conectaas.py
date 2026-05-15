@@ -25,6 +25,20 @@ def _first_value(data: dict[str, Any], keys: tuple[str, ...]) -> Any:
     return None
 
 
+def _safe_int(value: Any, default: int) -> int:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _clean_token(value: str) -> str:
+    token = value.strip()
+    if token.lower().startswith("bearer "):
+        return token.split(" ", 1)[1].strip()
+    return token
+
+
 def _normalize_date(value: Any) -> str | None:
     if not value:
         return None
@@ -66,12 +80,7 @@ def _normalize_price(value: Any) -> float | None:
 
 
 def _extract_offers_from_json(payload: Any) -> list[FlightOffer]:
-    """Extrai ofertas de uma resposta JSON com estrutura ainda variável.
-
-    A ConectaAS pode retornar objetos aninhados. Esta função faz uma varredura
-    defensiva procurando dicionários que tenham origem, destino, data e preço.
-    Após recebermos um JSON real, este mapeamento pode ser refinado.
-    """
+    """Extrai ofertas de uma resposta JSON com estrutura ainda variável."""
 
     offers: list[FlightOffer] = []
 
@@ -123,6 +132,25 @@ def _dedupe_offers(offers: list[FlightOffer]) -> list[FlightOffer]:
     return unique
 
 
+def _build_params() -> dict[str, Any]:
+    settings = get_settings()
+    return {
+        "pax": [settings.conectaas_pax, settings.conectaas_pax],
+        "maxResults": _safe_int(settings.conectaas_max_results, 100),
+        "maxNumberOfStops": _safe_int(settings.conectaas_max_number_of_stops, 1),
+        "routes": settings.conectaas_routes,
+        "businessClass": settings.conectaas_business_class or "ALSO",
+    }
+
+
+def _build_headers() -> dict[str, str]:
+    settings = get_settings()
+    return {
+        "accept": "application/json",
+        "Authorization": f"Bearer {_clean_token(settings.conectaas_token)}",
+    }
+
+
 async def collect_conectaas_offers() -> list[FlightOffer]:
     settings = get_settings()
 
@@ -134,20 +162,8 @@ async def collect_conectaas_offers() -> list[FlightOffer]:
         logger.warning("CONECTAAS_TOKEN não configurado.")
         return []
 
-    params = {
-        "pax": [settings.conectaas_pax, settings.conectaas_pax],
-        "maxResults": settings.conectaas_max_results,
-        "maxNumberOfStops": settings.conectaas_max_number_of_stops,
-        "routes": settings.conectaas_routes,
-        "businessClass": settings.conectaas_business_class,
-    }
-    headers = {
-        "accept": "application/json",
-        "Authorization": f"Bearer {settings.conectaas_token}",
-    }
-
     async with httpx.AsyncClient(timeout=settings.request_timeout_sec, follow_redirects=True) as client:
-        response = await client.get(settings.conectaas_url, params=params, headers=headers)
+        response = await client.get(settings.conectaas_url, params=_build_params(), headers=_build_headers())
         response.raise_for_status()
         payload = response.json()
 
@@ -165,20 +181,8 @@ async def debug_conectaas() -> dict[str, Any]:
     if not settings.conectaas_token:
         return {"configured": False, "message": "CONECTAAS_TOKEN não configurado"}
 
-    params = {
-        "pax": [settings.conectaas_pax, settings.conectaas_pax],
-        "maxResults": settings.conectaas_max_results,
-        "maxNumberOfStops": settings.conectaas_max_number_of_stops,
-        "routes": settings.conectaas_routes,
-        "businessClass": settings.conectaas_business_class,
-    }
-    headers = {
-        "accept": "application/json",
-        "Authorization": f"Bearer {settings.conectaas_token}",
-    }
-
     async with httpx.AsyncClient(timeout=settings.request_timeout_sec, follow_redirects=True) as client:
-        response = await client.get(settings.conectaas_url, params=params, headers=headers)
+        response = await client.get(settings.conectaas_url, params=_build_params(), headers=_build_headers())
 
     try:
         payload = response.json()
@@ -201,6 +205,7 @@ async def debug_conectaas() -> dict[str, Any]:
         "configured": True,
         "status_code": response.status_code,
         "final_url": str(response.url),
+        "params_used": _build_params(),
         "top_level_type": top_level_type,
         "top_level_keys": top_level_keys,
         "parsed_offers": len(offers),
