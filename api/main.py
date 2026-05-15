@@ -1,5 +1,6 @@
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from loguru import logger
 
 from crawler.config import get_settings
 from crawler.database import init_db
@@ -9,7 +10,7 @@ from crawler.runner import collect_offers
 
 app = FastAPI(
     title="CVC Flight Price Crawler",
-    version="0.3.0",
+    version="0.3.1",
     description="API para consulta de ofertas aéreas coletadas pelo crawler.",
 )
 
@@ -32,11 +33,7 @@ def verify_admin_key(
     x_api_key: str | None = Header(default=None),
     api_key: str | None = Query(default=None),
 ) -> None:
-    """Protege endpoints administrativos com API_SECRET_KEY.
-
-    Preferência: enviar a chave no header `x-api-key`.
-    Alternativa: usar query param `?api_key=...` para serviços de cron simples.
-    """
+    """Protege endpoints administrativos com API_SECRET_KEY."""
 
     settings = get_settings()
     expected_key = settings.api_secret_key
@@ -64,14 +61,21 @@ async def health() -> dict[str, str]:
 
 @app.post("/admin/collect", dependencies=[Depends(verify_admin_key)])
 async def collect_now() -> dict[str, int | str]:
-    """Dispara uma coleta manual e grava o resultado no banco.
+    """Dispara uma coleta manual e grava o resultado no banco."""
 
-    Este endpoint substitui temporariamente o Background Worker pago.
-    Pode ser chamado manualmente ou por um serviço externo de cron.
-    """
-
-    offers = await collect_offers()
-    saved = await save_offers(offers)
+    try:
+        offers = await collect_offers()
+        saved = await save_offers(offers)
+    except Exception as exc:
+        logger.exception("Erro ao executar coleta manual")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Erro ao executar coleta manual.",
+                "error_type": exc.__class__.__name__,
+                "error": str(exc),
+            },
+        ) from exc
 
     return {
         "status": "ok",
