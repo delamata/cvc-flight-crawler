@@ -12,7 +12,8 @@ from crawler.parser import parse_flight_offers
 from crawler.repository import get_latest_offers, save_offers
 from crawler.runner import collect_offers
 
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.4.1"
+STARTUP_STATUS: dict[str, str] = {"database": "not_started"}
 
 DEFAULT_HEADERS = {
     "User-Agent": (
@@ -67,18 +68,36 @@ def verify_admin_key(
 
 @app.on_event("startup")
 async def startup() -> None:
-    await init_db()
+    try:
+        await init_db()
+        STARTUP_STATUS["database"] = "ok"
+    except Exception as exc:
+        STARTUP_STATUS["database"] = "error"
+        STARTUP_STATUS["database_error_type"] = exc.__class__.__name__
+        STARTUP_STATUS["database_error"] = str(exc)[:500]
+        logger.exception("Erro ao inicializar banco no startup")
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
-    settings = get_settings()
-    return {
-        "status": "ok",
-        "version": APP_VERSION,
-        "crawler_url": settings.cvc_base_url,
-        "conectaas_enabled": bool(settings.conectaas_url and settings.conectaas_token),
-    }
+async def health() -> dict[str, object]:
+    try:
+        settings = get_settings()
+        return {
+            "status": "ok",
+            "version": APP_VERSION,
+            "crawler_url": settings.cvc_base_url,
+            "conectaas_enabled": bool(settings.conectaas_url and settings.conectaas_token),
+            "startup": STARTUP_STATUS,
+        }
+    except Exception as exc:
+        logger.exception("Erro no health check")
+        return {
+            "status": "degraded",
+            "version": APP_VERSION,
+            "error_type": exc.__class__.__name__,
+            "error": str(exc)[:500],
+            "startup": STARTUP_STATUS,
+        }
 
 
 @app.post("/admin/collect", dependencies=[Depends(verify_admin_key)])
@@ -86,6 +105,7 @@ async def collect_now() -> dict[str, int | str]:
     """Dispara uma coleta manual e grava o resultado no banco."""
 
     try:
+        await init_db()
         offers = await collect_offers()
         saved = await save_offers(offers)
     except Exception as exc:
