@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     """Configurações do projeto carregadas via variáveis de ambiente."""
 
     database_url: str = Field(default="sqlite+aiosqlite:///./cvc_feed.db", alias="DATABASE_URL")
-    cvc_base_url: str = Field(default="https://www.cvc.com.br", alias="CVC_BASE_URL")
+    cvc_base_url: str = Field(default="https://www.cvc.com.br/lp/promocoes", alias="CVC_BASE_URL")
     crawler_interval_min: int = Field(default=30, alias="CRAWLER_INTERVAL_MIN")
     max_retries: int = Field(default=3, alias="MAX_RETRIES")
     request_timeout_sec: int = Field(default=30, alias="REQUEST_TIMEOUT_SEC")
