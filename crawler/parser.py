@@ -34,14 +34,22 @@ OFFER_TITLE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+FULL_TEXT_PATTERN = re.compile(
+    r"(?:aereo|pacote)\s+(.+?)\s+saindo\s+de\s+(.+?)\s+"
+    r"(?:aereo|hospedagem|saida|check|desconto|a partir|r\$|voando|ate|\d+\s+dias)",
+    re.IGNORECASE,
+)
+
+ROUTE_STOP_PATTERN = re.compile(
+    r"\s{2,}|\s+saida\b|\s+check\b|\s+a partir\b|\s+r\$|"
+    r"\s+aereo\b|\s+hospedagem\b|\s+voando\b|\s+ate\b|"
+    r"\s+desconto\b|\s+\d+\s+dias\b|\s+em ate\b|\s+total\b",
+    re.IGNORECASE,
+)
+
 
 def parse_flight_offers(html: str, source_url: str | None = None) -> list[FlightOffer]:
-    """Extrai ofertas da LP de promoções da CVC.
-
-    A página `lp/promocoes` pode entregar títulos acompanhados de outros textos
-    no mesmo bloco, então o parser localiza os padrões `Aéreo/Pacote ... Saindo de ...`
-    em qualquer ponto da linha.
-    """
+    """Extrai ofertas da LP de promoções da CVC."""
 
     soup = BeautifulSoup(html, "html.parser")
     offers = _parse_promotions_page(soup, source_url=source_url)
@@ -65,32 +73,60 @@ def _parse_promotions_page(soup: BeautifulSoup, source_url: str | None = None) -
 
         origin_city, destination_city = route_match
         window = " ".join(lines[idx : idx + 16])
-        departure_date = _extract_departure_date(window)
-        price = _extract_price(window)
+        offer = _build_offer(origin_city, destination_city, window, source_url)
 
-        if not destination_city or not departure_date:
-            continue
+        if offer:
+            offers.append(offer)
 
-        origin = _city_to_iata(origin_city or "sao paulo")
-        destination = _city_to_iata(destination_city)
+    if offers:
+        return _dedupe_offers(offers)
 
-        if not origin or not destination:
-            continue
+    return _parse_full_text(" ".join(lines), source_url=source_url)
 
-        offers.append(
-            FlightOffer(
-                origin=origin,
-                destination=destination,
-                departure_date=departure_date,
-                return_date=None,
-                price=price,
-                currency="BRL",
-                source_site="cvc.com.br/lp/promocoes",
-                source_url=source_url,
-            )
-        )
+
+def _parse_full_text(text: str, source_url: str | None = None) -> list[FlightOffer]:
+    normalized_text = _normalize(text)
+    offers: list[FlightOffer] = []
+
+    for match in FULL_TEXT_PATTERN.finditer(normalized_text):
+        destination_city = _clean_route_piece(match.group(1))
+        origin_city = _clean_route_piece(match.group(2))
+        window = normalized_text[match.start() : match.end() + 600]
+        offer = _build_offer(origin_city, destination_city, window, source_url)
+
+        if offer:
+            offers.append(offer)
 
     return _dedupe_offers(offers)
+
+
+def _build_offer(
+    origin_city: str | None,
+    destination_city: str | None,
+    window: str,
+    source_url: str | None,
+) -> FlightOffer | None:
+    if not destination_city:
+        return None
+
+    departure_date = _extract_departure_date(window)
+    price = _extract_price(window)
+    origin = _city_to_iata(origin_city or "sao paulo")
+    destination = _city_to_iata(destination_city)
+
+    if not origin or not destination or not departure_date:
+        return None
+
+    return FlightOffer(
+        origin=origin,
+        destination=destination,
+        departure_date=departure_date,
+        return_date=None,
+        price=price,
+        currency="BRL",
+        source_site="cvc.com.br/lp/promocoes",
+        source_url=source_url,
+    )
 
 
 def _parse_generic_cards(soup: BeautifulSoup, source_url: str | None = None) -> list[FlightOffer]:
@@ -131,12 +167,13 @@ def _extract_route(title: str) -> tuple[str | None, str | None] | None:
 
 
 def _clean_route_piece(value: str) -> str:
-    value = re.split(r"\s{2,}|\s+saida\b|\s+check\b|\s+a partir\b|\s+r\$", value, maxsplit=1)[0]
+    value = ROUTE_STOP_PATTERN.split(value, maxsplit=1)[0]
     return _clean_text(value)
 
 
 def _extract_departure_date(text: str) -> str | None:
-    match = re.search(r"(?:Saída|Saida|Check-in|Check in):?\s*(\d{2}/\d{2}/\d{4})", text, re.IGNORECASE)
+    normalized = _normalize(text)
+    match = re.search(r"(?:saida|check[- ]?in):?\s*(\d{2}/\d{2}/\d{4})", normalized)
     if not match:
         return None
 
@@ -145,7 +182,8 @@ def _extract_departure_date(text: str) -> str | None:
 
 
 def _extract_price(text: str) -> float | None:
-    match = re.search(r"R\$\s*([0-9\.]+(?:,[0-9]{2})?)", text)
+    normalized = _normalize(text)
+    match = re.search(r"r\$\s*([0-9\.]+(?:,[0-9]{2})?)", normalized)
     if not match:
         return None
 
@@ -192,6 +230,7 @@ def _parse_price(value: str) -> float | None:
 
     normalized = (
         value.replace("R$", "")
+        .replace("r$", "")
         .replace(".", "")
         .replace(",", ".")
         .strip()
