@@ -1,5 +1,6 @@
 import re
 import unicodedata
+from urllib.parse import parse_qs, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -52,12 +53,99 @@ def parse_flight_offers(html: str, source_url: str | None = None) -> list[Flight
     """Extrai ofertas da LP de promoções da CVC."""
 
     soup = BeautifulSoup(html, "html.parser")
-    offers = _parse_promotions_page(soup, source_url=source_url)
 
+    offers = _parse_cvc_segmented_offer_cards(soup, source_url=source_url)
+    if offers:
+        return offers
+
+    offers = _parse_promotions_page(soup, source_url=source_url)
     if offers:
         return offers
 
     return _parse_generic_cards(soup, source_url=source_url)
+
+
+def _parse_cvc_segmented_offer_cards(
+    soup: BeautifulSoup,
+    source_url: str | None = None,
+) -> list[FlightOffer]:
+    """Extrai cards da estrutura real da LP: bloco-oferta-segmentado-2-botoes."""
+
+    offers: list[FlightOffer] = []
+
+    for card in soup.select(".bloco-oferta-segmentado-2-botoes-card-infos"):
+        destination_city = _safe_text(card, ".bloco-oferta-segmentado-2-botoes-card-produto strong")
+        origin_text = _safe_text(card, ".bloco-oferta-segmentado-2-botoes-card-categoria")
+        origin_city = _extract_origin_from_category(origin_text)
+
+        card_text = card.get_text(" ", strip=True)
+        price_text = _safe_text(card, ".bloco-oferta-segmentado-2-botoes-card-comerciais") or card_text
+        price = _extract_price(price_text)
+        departure_date = _extract_departure_date(card_text)
+
+        primary_link = card.select_one("a.botao-card-compre-no-site[href], a[href*='/passagens/'][href]")
+        offer_url = urljoin(source_url or "https://www.cvc.com.br", primary_link.get("href")) if primary_link else source_url
+
+        href_origin, href_destination, href_departure, href_return = _extract_route_from_offer_url(offer_url)
+
+        origin = href_origin or _city_to_iata(origin_city or "sao paulo")
+        destination = href_destination or _city_to_iata(destination_city)
+        departure_date = href_departure or departure_date
+
+        if not origin or not destination or not departure_date:
+            continue
+
+        offers.append(
+            FlightOffer(
+                origin=origin,
+                destination=destination,
+                departure_date=departure_date,
+                return_date=href_return,
+                price=price,
+                currency="BRL",
+                source_site="cvc.com.br/lp/promocoes",
+                source_url=offer_url,
+            )
+        )
+
+    return _dedupe_offers(offers)
+
+
+def _extract_origin_from_category(value: str) -> str | None:
+    normalized = _normalize(value)
+    if "saindo de " in normalized:
+        return normalized.split("saindo de ", 1)[1].strip()
+    return normalized or None
+
+
+def _extract_route_from_offer_url(offer_url: str | None) -> tuple[str | None, str | None, str | None, str | None]:
+    if not offer_url:
+        return None, None, None, None
+
+    parsed = urlparse(offer_url)
+    match = re.search(r"/search/([A-Z]{3})/([A-Z]{3})", parsed.path, re.IGNORECASE)
+    origin = match.group(1).upper() if match else None
+    destination = match.group(2).upper() if match else None
+
+    query = parse_qs(parsed.query)
+    departure = _normalize_iso_date(query.get("Date1", [None])[0])
+    return_date = _normalize_iso_date(query.get("Date2", [None])[0])
+
+    return origin, destination, departure, return_date
+
+
+def _normalize_iso_date(value: str | None) -> str | None:
+    if not value:
+        return None
+
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        return value
+
+    if re.fullmatch(r"\d{2}/\d{2}/\d{4}", value):
+        day, month, year = value.split("/")
+        return f"{year}-{month}-{day}"
+
+    return None
 
 
 def _parse_promotions_page(soup: BeautifulSoup, source_url: str | None = None) -> list[FlightOffer]:
