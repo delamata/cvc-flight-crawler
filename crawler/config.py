@@ -16,6 +16,14 @@ class Settings(BaseSettings):
     api_port: int = Field(default=8000, alias="API_PORT")
     api_secret_key: str = Field(default="troque_esta_chave_em_producao", alias="API_SECRET_KEY")
 
+    conectaas_url: str = Field(default="", alias="CONECTAAS_URL")
+    conectaas_token: str | None = Field(default=None, alias="CONECTAAS_TOKEN")
+    conectaas_pax: str = Field(default="40", alias="CONECTAAS_PAX")
+    conectaas_max_results: int = Field(default=100, alias="CONECTAAS_MAX_RESULTS")
+    conectaas_max_number_of_stops: int = Field(default=1, alias="CONECTAAS_MAX_NUMBER_OF_STOPS")
+    conectaas_routes: str = Field(default="50", alias="CONECTAAS_ROUTES")
+    conectaas_business_class: str = Field(default="ALSO", alias="CONECTAAS_BUSINESS_CLASS")
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
