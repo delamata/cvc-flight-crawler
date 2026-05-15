@@ -8,9 +8,11 @@ from crawler.models import FlightOffer
 from crawler.repository import get_latest_offers, save_offers
 from crawler.runner import collect_offers
 
+APP_VERSION = "0.3.3"
+
 app = FastAPI(
     title="CVC Flight Price Crawler",
-    version="0.3.1",
+    version=APP_VERSION,
     description="API para consulta de ofertas aéreas coletadas pelo crawler.",
 )
 
@@ -56,7 +58,12 @@ async def startup() -> None:
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok"}
+    settings = get_settings()
+    return {
+        "status": "ok",
+        "version": APP_VERSION,
+        "crawler_url": settings.cvc_base_url,
+    }
 
 
 @app.post("/admin/collect", dependencies=[Depends(verify_admin_key)])
