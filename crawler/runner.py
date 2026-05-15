@@ -3,6 +3,7 @@ from loguru import logger
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 
+from crawler.conectaas import collect_conectaas_offers
 from crawler.config import get_settings
 from crawler.models import FlightOffer
 from crawler.parser import parse_flight_offers
@@ -19,13 +20,21 @@ DEFAULT_HEADERS = {
 
 
 async def collect_offers(url: str | None = None) -> list[FlightOffer]:
-    """Coleta ofertas da URL informada.
+    """Coleta ofertas.
 
-    Primeiro tenta baixar o HTML com HTTP simples, que é suficiente para a LP de promoções.
-    Se não encontrar ofertas, usa Playwright como fallback.
+    Prioridade:
+    1. ConectaAS, quando configurado via CONECTAAS_URL + CONECTAAS_TOKEN.
+    2. HTML da LP da CVC como fallback legado.
     """
 
     settings = get_settings()
+
+    if settings.conectaas_url and settings.conectaas_token:
+        conectaas_offers = await collect_conectaas_offers()
+        if conectaas_offers:
+            return conectaas_offers
+        logger.warning("ConectaAS configurada, mas não retornou ofertas parseáveis. Usando fallback HTML.")
+
     target_url = url or settings.cvc_base_url
 
     try:
