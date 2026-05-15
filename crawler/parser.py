@@ -29,16 +29,18 @@ CITY_TO_IATA = {
     "porto de galinhas": "REC",
 }
 
+OFFER_TITLE_PATTERN = re.compile(
+    r"(?:^|\b)(aereo|pacote)\s+(.+?)\s+saindo\s+de\s+([^\|\n\r]+)",
+    re.IGNORECASE,
+)
+
 
 def parse_flight_offers(html: str, source_url: str | None = None) -> list[FlightOffer]:
     """Extrai ofertas da LP de promoções da CVC.
 
-    A página `lp/promocoes` não expõe cards com classes simples como `.flight-card`.
-    Por isso, o parser usa o texto renderizado e identifica blocos com padrões como:
-    - "Aéreo Bariloche Saindo de São Paulo"
-    - "Pacote Rio de Janeiro Saindo de São Paulo"
-    - "Saída: 16/06/2026"
-    - "a partir de R$ 1.539"
+    A página `lp/promocoes` pode entregar títulos acompanhados de outros textos
+    no mesmo bloco, então o parser localiza os padrões `Aéreo/Pacote ... Saindo de ...`
+    em qualquer ponto da linha.
     """
 
     soup = BeautifulSoup(html, "html.parser")
@@ -56,12 +58,13 @@ def _parse_promotions_page(soup: BeautifulSoup, source_url: str | None = None) -
 
     for idx, line in enumerate(lines):
         title = _clean_text(line)
+        route_match = _extract_route(title)
 
-        if not _is_offer_title(title):
+        if not route_match:
             continue
 
-        window = " ".join(lines[idx : idx + 12])
-        origin_city, destination_city = _extract_route(title)
+        origin_city, destination_city = route_match
+        window = " ".join(lines[idx : idx + 16])
         departure_date = _extract_departure_date(window)
         price = _extract_price(window)
 
@@ -114,23 +117,22 @@ def _parse_generic_cards(soup: BeautifulSoup, source_url: str | None = None) -> 
     return offers
 
 
-def _is_offer_title(title: str) -> bool:
-    lowered = _normalize(title)
-    return (
-        (lowered.startswith("aereo ") or lowered.startswith("pacote "))
-        and " saindo de " in lowered
-    )
-
-
-def _extract_route(title: str) -> tuple[str | None, str | None]:
+def _extract_route(title: str) -> tuple[str | None, str | None] | None:
     normalized = _normalize(title)
-    normalized = re.sub(r"^(aereo|pacote)\s+", "", normalized).strip()
+    match = OFFER_TITLE_PATTERN.search(normalized)
 
-    if " saindo de " not in normalized:
-        return None, None
+    if not match:
+        return None
 
-    destination, origin = normalized.split(" saindo de ", 1)
-    return origin.strip(), destination.strip()
+    destination = _clean_route_piece(match.group(2))
+    origin = _clean_route_piece(match.group(3))
+
+    return origin, destination
+
+
+def _clean_route_piece(value: str) -> str:
+    value = re.split(r"\s{2,}|\s+saida\b|\s+check\b|\s+a partir\b|\s+r\$", value, maxsplit=1)[0]
+    return _clean_text(value)
 
 
 def _extract_departure_date(text: str) -> str | None:
