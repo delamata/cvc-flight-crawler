@@ -11,7 +11,7 @@ services:
           name: cvc-flight-crawler-db
           property: connectionString
       - key: CVC_BASE_URL
-        value: https://www.cvc.com.br
+        value: https://www.cvc.com.br/lp/promocoes
       - key: CRAWLER_INTERVAL_MIN
         value: 30
       - key: HEADLESS
@@ -30,7 +30,7 @@ services:
           name: cvc-flight-crawler-db
           property: connectionString
       - key: CVC_BASE_URL
-        value: https://www.cvc.com.br
+        value: https://www.cvc.com.br/lp/promocoes
       - key: CRAWLER_INTERVAL_MIN
         value: 30
       - key: HEADLESS
