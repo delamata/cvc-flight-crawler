@@ -11,7 +11,7 @@ from crawler.parser import parse_flight_offers
 from crawler.repository import get_latest_offers, save_offers
 from crawler.runner import collect_offers
 
-APP_VERSION = "0.3.4"
+APP_VERSION = "0.3.5"
 
 DEFAULT_HEADERS = {
     "User-Agent": (
@@ -131,20 +131,27 @@ async def debug_http() -> dict[str, object]:
 
     soup = BeautifulSoup(html, "html.parser")
     lines = [line.strip() for line in soup.get_text("\n").splitlines() if line.strip()]
+    segmented_cards = soup.select(".bloco-oferta-segmentado-2-botoes-card-infos")
     candidates = [
         line
         for line in lines
         if "Aéreo" in line or "Aereo" in line or "Pacote" in line or "Saída" in line or "Saida" in line or "R$" in line
     ][:100]
     parsed = parse_flight_offers(html, source_url=str(response.url))
+    parsed_preview = [offer.model_dump(mode="json") for offer in parsed[:10]]
+    first_card_text = segmented_cards[0].get_text(" ", strip=True)[:1000] if segmented_cards else None
 
     return {
         "status_code": response.status_code,
+        "configured_url": settings.cvc_base_url,
         "final_url": str(response.url),
         "html_length": len(html),
         "text_lines": len(lines),
+        "segmented_card_count": len(segmented_cards),
         "candidate_lines": len(candidates),
         "parsed_offers": len(parsed),
+        "first_card_text": first_card_text,
+        "parsed_preview": parsed_preview,
         "sample_candidates": candidates[:30],
     }
 
