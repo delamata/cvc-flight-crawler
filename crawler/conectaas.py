@@ -1,4 +1,5 @@
 from typing import Any
+import re
 
 import httpx
 from loguru import logger
@@ -14,6 +15,8 @@ PRICE_KEY_HINTS = (
     "tariff",
     "tarifa",
     "valor",
+    "withtax",
+    "withouttax",
 )
 
 PRICE_CONTAINER_KEY_HINTS = (
@@ -29,6 +32,7 @@ PRICE_CONTAINER_KEY_HINTS = (
     "tariff",
     "tarifa",
     "valor",
+    "metadata",
 )
 
 PRICE_KEY_EXCLUDES = (
@@ -43,6 +47,23 @@ PRICE_KEY_EXCLUDES = (
 )
 
 CURRENCY_KEYS = ("currency", "currencyCode", "currency_code", "moeda")
+PREFERRED_PRICE_KEYS = (
+    "minWithTax",
+    "min_with_tax",
+    "minimumWithTax",
+    "minAmountWithTax",
+    "minWithoutTax",
+    "min_without_tax",
+    "minimumWithoutTax",
+    "minAmountWithoutTax",
+    "totalWithTax",
+    "totalAmountWithTax",
+    "totalPrice",
+    "totalAmount",
+    "amount",
+    "value",
+    "price",
+)
 
 
 def _first_value(data: dict[str, Any], keys: tuple[str, ...]) -> Any:
@@ -71,6 +92,25 @@ def _nested_value(value: Any, keys: tuple[str, ...]) -> Any:
     if isinstance(value, dict):
         return _first_value(value, keys)
     return value
+
+
+def _parse_number(value: Any) -> float | None:
+    if value is None:
+        return None
+
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    text = str(value).replace("R$", "").strip()
+    text = text.replace(".", "").replace(",", ".")
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    if not match:
+        return None
+
+    try:
+        return float(match.group(0))
+    except ValueError:
+        return None
 
 
 def _normalize_date(value: Any) -> str | None:
@@ -102,24 +142,34 @@ def _normalize_iata(value: Any) -> str | None:
 
 
 def _normalize_price(value: Any) -> float | None:
-    value = _nested_value(value, ("amount", "total", "value", "price", "totalPrice", "totalAmount"))
-    if value is None:
+    if isinstance(value, dict):
+        for key in PREFERRED_PRICE_KEYS:
+            direct = _first_value(value, (key,))
+            price = _normalize_price(direct)
+            if price is not None and price > 0:
+                return price
         return None
 
-    if isinstance(value, (int, float)):
-        return float(value)
+    if isinstance(value, str):
+        for key in PREFERRED_PRICE_KEYS:
+            pattern = rf"{re.escape(key)}\s*=\s*([0-9]+(?:[\.,][0-9]+)?)"
+            match = re.search(pattern, value, re.IGNORECASE)
+            if match:
+                price = _parse_number(match.group(1))
+                if price is not None and price > 0:
+                    return price
 
-    text = str(value).replace("R$", "").replace(".", "").replace(",", ".").strip()
-    try:
-        return float(text)
-    except ValueError:
-        return None
+    return _parse_number(value)
 
 
 def _find_price_anywhere(obj: Any) -> float | None:
-    """Busca um preço dentro de um subobjeto explicitamente relacionado a preço."""
+    """Busca preço dentro de um subobjeto explicitamente relacionado a preço."""
 
     if isinstance(obj, dict):
+        direct_price = _normalize_price(obj)
+        if direct_price is not None and direct_price > 0:
+            return direct_price
+
         for key, value in obj.items():
             key_normalized = str(key).lower().replace("_", "")
             if any(excluded in key_normalized for excluded in PRICE_KEY_EXCLUDES):
@@ -144,13 +194,16 @@ def _find_price_anywhere(obj: Any) -> float | None:
 
 
 def _find_price_local(item: dict[str, Any]) -> float | None:
-    """Busca preço no objeto atual ou em campos filhos explicitamente de preço.
-
-    Isso evita pegar o primeiro preço do payload inteiro e aplicar a todos os voos.
-    O preço é herdado apenas quando aparece no próprio bloco/ancestral da opção.
-    """
+    """Busca preço no objeto atual ou em campos filhos explicitamente de preço."""
 
     candidates: list[tuple[int, float]] = []
+
+    # Caso específico ConectaAS: metadata.price contém minWithTax/minWithoutTax.
+    metadata = item.get("metadata")
+    if isinstance(metadata, dict):
+        metadata_price = _normalize_price(metadata.get("price"))
+        if metadata_price is not None and metadata_price > 0:
+            candidates.append((10, metadata_price))
 
     for key, value in item.items():
         key_normalized = str(key).lower().replace("_", "")
@@ -161,6 +214,10 @@ def _find_price_local(item: dict[str, Any]) -> float | None:
             price = _normalize_price(value)
             if price is not None and price > 0:
                 score = 1
+                if "minwithtax" in key_normalized:
+                    score += 8
+                if "min" in key_normalized:
+                    score += 5
                 if "total" in key_normalized:
                     score += 3
                 if "price" in key_normalized or "amount" in key_normalized:
@@ -171,8 +228,8 @@ def _find_price_local(item: dict[str, Any]) -> float | None:
             price = _find_price_anywhere(value)
             if price is not None and price > 0:
                 score = 2
-                if "total" in key_normalized:
-                    score += 3
+                if "metadata" in key_normalized:
+                    score += 6
                 if "price" in key_normalized or "fare" in key_normalized:
                     score += 2
                 candidates.append((score, price))
@@ -188,6 +245,18 @@ def _find_currency_local(item: dict[str, Any]) -> str | None:
     direct = _first_value(item, CURRENCY_KEYS)
     if direct:
         return str(direct).upper()[:3]
+
+    metadata = item.get("metadata")
+    if isinstance(metadata, dict):
+        price_value = metadata.get("price")
+        if isinstance(price_value, dict):
+            currency = _first_value(price_value, CURRENCY_KEYS)
+            if currency:
+                return str(currency).upper()[:3]
+        if isinstance(price_value, str):
+            match = re.search(r"currency\s*=\s*([A-Za-z]{3})", price_value, re.IGNORECASE)
+            if match:
+                return match.group(1).upper()
 
     for key, value in item.items():
         key_normalized = str(key).lower().replace("_", "")
