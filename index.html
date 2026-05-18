@@ -117,6 +117,13 @@
       margin-top: 16px;
     }
 
+    .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
     .button {
       border: 0;
       border-radius: 999px;
@@ -127,7 +134,14 @@
       cursor: pointer;
     }
 
+    .button.secondary {
+      background: white;
+      color: var(--cvc-blue);
+      border: 1px solid var(--cvc-blue);
+    }
+
     .button:hover { opacity: .92; }
+    .button:disabled { opacity: .45; cursor: not-allowed; }
 
     table {
       width: 100%;
@@ -202,11 +216,11 @@
       </article>
       <article class="card">
         <h2>Crawler</h2>
-        <p>Coleta baseada em Python, Playwright e parser HTML ajustável por seletores.</p>
+        <p>Coleta baseada em Python, ConectaAS e fallback HTML controlado.</p>
       </article>
       <article class="card">
-        <h2>Scheduler</h2>
-        <p>Execução periódica preparada com APScheduler para automatizar a coleta.</p>
+        <h2>Exportação</h2>
+        <p>Download do feed carregado nos formatos <code>CSV</code>, <code>XML</code> e <code>JSON</code>.</p>
       </article>
     </section>
 
@@ -216,7 +230,12 @@
 
       <div class="toolbar">
         <span id="feed-message">Carregando dados...</span>
-        <button class="button" type="button" onclick="loadFeed()">Atualizar feed</button>
+        <div class="actions">
+          <button class="button secondary" type="button" onclick="downloadCSV()">Download CSV</button>
+          <button class="button secondary" type="button" onclick="downloadXML()">Download XML</button>
+          <button class="button secondary" type="button" onclick="downloadJSON()">Download JSON</button>
+          <button class="button" type="button" onclick="loadFeed()">Atualizar feed</button>
+        </div>
       </div>
 
       <table>
@@ -238,7 +257,7 @@
       </table>
 
       <div class="note" id="technical-note">
-        API configurada: <code>https://cvc-flight-crawler.onrender.com</code>. Nesta fase, o feed pode retornar vazio até o crawler gravar dados reais.
+        API configurada: <code>https://cvc-flight-crawler.onrender.com</code>. Use os botões acima para baixar o feed carregado.
       </div>
     </section>
   </main>
@@ -249,6 +268,7 @@
 
   <script>
     const API_BASE_URL = "https://cvc-flight-crawler.onrender.com";
+    let currentFeed = [];
 
     const statusEl = document.getElementById("api-status");
     const feedBodyEl = document.getElementById("feed-body");
@@ -263,6 +283,37 @@
       }).format(Number(value));
     }
 
+    function normalizeItem(item) {
+      return {
+        origin: item.origin || "",
+        destination: item.destination || "",
+        departure_date: item.departure_date || "",
+        return_date: item.return_date || "",
+        price: item.price ?? "",
+        currency: item.currency || "BRL",
+        source_site: item.source_site || "",
+        source_url: item.source_url || ""
+      };
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function escapeXml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&apos;");
+    }
+
     function renderRows(items) {
       if (!items.length) {
         feedBodyEl.innerHTML = `<tr><td colspan="6">Nenhuma oferta encontrada. O endpoint está funcionando, mas ainda não há dados gravados.</td></tr>`;
@@ -271,14 +322,58 @@
 
       feedBodyEl.innerHTML = items.map(item => `
         <tr>
-          <td>${item.origin || "-"}</td>
-          <td>${item.destination || "-"}</td>
-          <td>${item.departure_date || "-"}</td>
-          <td>${item.return_date || "-"}</td>
+          <td>${escapeHtml(item.origin || "-")}</td>
+          <td>${escapeHtml(item.destination || "-")}</td>
+          <td>${escapeHtml(item.departure_date || "-")}</td>
+          <td>${escapeHtml(item.return_date || "-")}</td>
           <td>${formatPrice(item.price, item.currency || "BRL")}</td>
-          <td>${item.source_url ? `<a href="${item.source_url}" target="_blank" rel="noopener">${item.source_site || "Origem"}</a>` : (item.source_site || "-")}</td>
+          <td>${item.source_url ? `<a href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener">${escapeHtml(item.source_site || "Origem")}</a>` : escapeHtml(item.source_site || "-")}</td>
         </tr>
       `).join("");
+    }
+
+    function downloadFile(filename, content, mimeType) {
+      if (!currentFeed.length) {
+        alert("Não há dados carregados para exportar.");
+        return;
+      }
+
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+
+    function csvCell(value) {
+      const text = String(value ?? "");
+      return `"${text.replaceAll('"', '""')}"`;
+    }
+
+    function downloadCSV() {
+      const rows = currentFeed.map(normalizeItem);
+      const headers = ["origin", "destination", "departure_date", "return_date", "price", "currency", "source_site", "source_url"];
+      const content = [
+        headers.join(";"),
+        ...rows.map(row => headers.map(header => csvCell(row[header])).join(";"))
+      ].join("\n");
+
+      downloadFile("cvc-flight-feed.csv", content, "text/csv;charset=utf-8");
+    }
+
+    function downloadJSON() {
+      const rows = currentFeed.map(normalizeItem);
+      downloadFile("cvc-flight-feed.json", JSON.stringify(rows, null, 2), "application/json;charset=utf-8");
+    }
+
+    function downloadXML() {
+      const rows = currentFeed.map(normalizeItem);
+      const content = `<?xml version="1.0" encoding="UTF-8"?>\n<offers>\n${rows.map(row => `  <offer>\n    <origin>${escapeXml(row.origin)}</origin>\n    <destination>${escapeXml(row.destination)}</destination>\n    <departure_date>${escapeXml(row.departure_date)}</departure_date>\n    <return_date>${escapeXml(row.return_date)}</return_date>\n    <price>${escapeXml(row.price)}</price>\n    <currency>${escapeXml(row.currency)}</currency>\n    <source_site>${escapeXml(row.source_site)}</source_site>\n    <source_url>${escapeXml(row.source_url)}</source_url>\n  </offer>`).join("\n")}\n</offers>`;
+      downloadFile("cvc-flight-feed.xml", content, "application/xml;charset=utf-8");
     }
 
     async function checkHealth() {
@@ -306,10 +401,11 @@
         const response = await fetch(`${API_BASE_URL}/feed/latest`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
-        const items = Array.isArray(data) ? data : [];
-        renderRows(items);
-        feedMessageEl.textContent = `${items.length} oferta(s) carregada(s).`;
+        currentFeed = Array.isArray(data) ? data : [];
+        renderRows(currentFeed);
+        feedMessageEl.textContent = `${currentFeed.length} oferta(s) carregada(s).`;
       } catch (error) {
+        currentFeed = [];
         feedMessageEl.textContent = "Erro ao carregar feed.";
         feedBodyEl.innerHTML = `<tr><td colspan="6">Não foi possível carregar o feed da API Render.</td></tr>`;
         noteEl.classList.add("error");
