@@ -9,10 +9,10 @@ from crawler.config import get_settings
 from crawler.database import init_db
 from crawler.models import FlightOffer
 from crawler.parser import parse_flight_offers
-from crawler.repository import get_latest_offers, save_offers
+from crawler.repository import get_latest_offers, replace_offers
 from crawler.runner import collect_offers
 
-APP_VERSION = "0.4.1"
+APP_VERSION = "0.4.2"
 STARTUP_STATUS: dict[str, str] = {"database": "not_started"}
 
 DEFAULT_HEADERS = {
@@ -50,8 +50,6 @@ def verify_admin_key(
     x_api_key: str | None = Header(default=None),
     api_key: str | None = Query(default=None),
 ) -> None:
-    """Protege endpoints administrativos com API_SECRET_KEY."""
-
     settings = get_settings()
     expected_key = settings.api_secret_key
     provided_key = x_api_key or api_key
@@ -102,12 +100,12 @@ async def health() -> dict[str, object]:
 
 @app.post("/admin/collect", dependencies=[Depends(verify_admin_key)])
 async def collect_now() -> dict[str, int | str]:
-    """Dispara uma coleta manual e grava o resultado no banco."""
+    """Dispara uma coleta manual e substitui o feed atual por dados limpos."""
 
     try:
         await init_db()
         offers = await collect_offers()
-        saved = await save_offers(offers)
+        saved = await replace_offers(offers)
     except Exception as exc:
         logger.exception("Erro ao executar coleta manual")
         raise HTTPException(
@@ -144,8 +142,6 @@ async def debug_conectaas_endpoint() -> dict[str, object]:
 
 @app.get("/admin/debug-http", dependencies=[Depends(verify_admin_key)])
 async def debug_http() -> dict[str, object]:
-    """Diagnóstico protegido para validar o HTML recebido no Render."""
-
     settings = get_settings()
 
     try:
@@ -196,13 +192,9 @@ async def debug_http() -> dict[str, object]:
 
 @app.get("/feed", response_model=list[FlightOffer])
 async def feed() -> list[FlightOffer]:
-    """Retorna o feed consolidado a partir do banco de dados."""
-
     return await get_latest_offers(limit=500)
 
 
 @app.get("/feed/latest", response_model=list[FlightOffer])
 async def latest_feed() -> list[FlightOffer]:
-    """Retorna as ofertas mais recentes gravadas no banco de dados."""
-
     return await get_latest_offers(limit=50)
