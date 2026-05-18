@@ -11,8 +11,21 @@ PRICE_KEY_HINTS = (
     "amount",
     "total",
     "fare",
-    "tax",
-    "fee",
+    "tariff",
+    "tarifa",
+    "valor",
+)
+
+PRICE_CONTAINER_KEY_HINTS = (
+    "price",
+    "prices",
+    "pricing",
+    "fare",
+    "fares",
+    "payment",
+    "payments",
+    "commercial",
+    "commercials",
     "tariff",
     "tarifa",
     "valor",
@@ -26,19 +39,10 @@ PRICE_KEY_EXCLUDES = (
     "aircraft",
     "code",
     "class",
+    "basis",
 )
 
 CURRENCY_KEYS = ("currency", "currencyCode", "currency_code", "moeda")
-
-
-def _walk_values(obj: Any):
-    if isinstance(obj, dict):
-        yield obj
-        for value in obj.values():
-            yield from _walk_values(value)
-    elif isinstance(obj, list):
-        for item in obj:
-            yield from _walk_values(item)
 
 
 def _first_value(data: dict[str, Any], keys: tuple[str, ...]) -> Any:
@@ -98,7 +102,7 @@ def _normalize_iata(value: Any) -> str | None:
 
 
 def _normalize_price(value: Any) -> float | None:
-    value = _nested_value(value, ("amount", "total", "value", "price", "totalPrice"))
+    value = _nested_value(value, ("amount", "total", "value", "price", "totalPrice", "totalAmount"))
     if value is None:
         return None
 
@@ -112,67 +116,87 @@ def _normalize_price(value: Any) -> float | None:
         return None
 
 
-def _find_price_deep(obj: Any) -> float | None:
-    """Procura preço dentro de objetos aninhados da ConectaAS.
-
-    O preço normalmente fica em um nível acima dos trechos de voo, enquanto os
-    segmentos carregam departure/arrival. Por isso, a busca é recursiva.
-    """
+def _find_price_anywhere(obj: Any) -> float | None:
+    """Busca um preço dentro de um subobjeto explicitamente relacionado a preço."""
 
     if isinstance(obj, dict):
-        candidates: list[tuple[int, float]] = []
-
         for key, value in obj.items():
             key_normalized = str(key).lower().replace("_", "")
-
             if any(excluded in key_normalized for excluded in PRICE_KEY_EXCLUDES):
                 continue
 
             if any(hint in key_normalized for hint in PRICE_KEY_HINTS):
                 price = _normalize_price(value)
                 if price is not None and price > 0:
-                    score = 1
-                    if "total" in key_normalized:
-                        score += 3
-                    if "price" in key_normalized or "amount" in key_normalized:
-                        score += 2
-                    candidates.append((score, price))
+                    return price
 
-            nested_price = _find_price_deep(value)
-            if nested_price is not None:
-                candidates.append((1, nested_price))
-
-        if candidates:
-            candidates.sort(key=lambda item: item[0], reverse=True)
-            return candidates[0][1]
+            price = _find_price_anywhere(value)
+            if price is not None:
+                return price
 
     elif isinstance(obj, list):
         for item in obj:
-            price = _find_price_deep(item)
+            price = _find_price_anywhere(item)
             if price is not None:
                 return price
 
     return None
 
 
-def _find_currency_deep(obj: Any) -> str:
-    if isinstance(obj, dict):
-        direct = _first_value(obj, CURRENCY_KEYS)
-        if direct:
-            return str(direct).upper()[:3]
+def _find_price_local(item: dict[str, Any]) -> float | None:
+    """Busca preço no objeto atual ou em campos filhos explicitamente de preço.
 
-        for value in obj.values():
-            currency = _find_currency_deep(value)
-            if currency != "BRL":
-                return currency
+    Isso evita pegar o primeiro preço do payload inteiro e aplicar a todos os voos.
+    O preço é herdado apenas quando aparece no próprio bloco/ancestral da opção.
+    """
 
-    elif isinstance(obj, list):
-        for item in obj:
-            currency = _find_currency_deep(item)
-            if currency != "BRL":
-                return currency
+    candidates: list[tuple[int, float]] = []
 
-    return "BRL"
+    for key, value in item.items():
+        key_normalized = str(key).lower().replace("_", "")
+        if any(excluded in key_normalized for excluded in PRICE_KEY_EXCLUDES):
+            continue
+
+        if any(hint in key_normalized for hint in PRICE_KEY_HINTS):
+            price = _normalize_price(value)
+            if price is not None and price > 0:
+                score = 1
+                if "total" in key_normalized:
+                    score += 3
+                if "price" in key_normalized or "amount" in key_normalized:
+                    score += 2
+                candidates.append((score, price))
+
+        if any(hint in key_normalized for hint in PRICE_CONTAINER_KEY_HINTS):
+            price = _find_price_anywhere(value)
+            if price is not None and price > 0:
+                score = 2
+                if "total" in key_normalized:
+                    score += 3
+                if "price" in key_normalized or "fare" in key_normalized:
+                    score += 2
+                candidates.append((score, price))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda candidate: candidate[0], reverse=True)
+    return candidates[0][1]
+
+
+def _find_currency_local(item: dict[str, Any]) -> str | None:
+    direct = _first_value(item, CURRENCY_KEYS)
+    if direct:
+        return str(direct).upper()[:3]
+
+    for key, value in item.items():
+        key_normalized = str(key).lower().replace("_", "")
+        if any(hint in key_normalized for hint in PRICE_CONTAINER_KEY_HINTS) and isinstance(value, dict):
+            nested = _first_value(value, CURRENCY_KEYS)
+            if nested:
+                return str(nested).upper()[:3]
+
+    return None
 
 
 def _segment_to_offer(item: dict[str, Any], price: float | None, currency: str) -> FlightOffer | None:
@@ -200,18 +224,31 @@ def _segment_to_offer(item: dict[str, Any], price: float | None, currency: str) 
 
 
 def _extract_offers_from_json(payload: Any) -> list[FlightOffer]:
-    """Extrai ofertas de uma resposta JSON da ConectaAS."""
+    """Extrai ofertas propagando preço do objeto pai para os segmentos filhos."""
 
     offers: list[FlightOffer] = []
 
-    for item in _walk_values(payload):
-        price = _find_price_deep(item)
-        currency = _find_currency_deep(item)
+    def visit(obj: Any, inherited_price: float | None = None, inherited_currency: str = "BRL") -> None:
+        if isinstance(obj, dict):
+            local_price = _find_price_local(obj)
+            local_currency = _find_currency_local(obj)
 
-        offer = _segment_to_offer(item, price, currency)
-        if offer:
-            offers.append(offer)
+            current_price = local_price if local_price is not None else inherited_price
+            current_currency = local_currency or inherited_currency or "BRL"
 
+            offer = _segment_to_offer(obj, current_price, current_currency)
+            if offer:
+                offers.append(offer)
+                return
+
+            for value in obj.values():
+                visit(value, current_price, current_currency)
+
+        elif isinstance(obj, list):
+            for item in obj:
+                visit(item, inherited_price, inherited_currency)
+
+    visit(payload)
     return _dedupe_offers(offers)
 
 
