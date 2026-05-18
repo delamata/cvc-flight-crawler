@@ -6,6 +6,30 @@ from loguru import logger
 from crawler.config import get_settings
 from crawler.models import FlightOffer
 
+PRICE_KEY_HINTS = (
+    "price",
+    "amount",
+    "total",
+    "fare",
+    "tax",
+    "fee",
+    "tariff",
+    "tarifa",
+    "valor",
+)
+
+PRICE_KEY_EXCLUDES = (
+    "duration",
+    "flightnumber",
+    "seatsleft",
+    "numberofstops",
+    "aircraft",
+    "code",
+    "class",
+)
+
+CURRENCY_KEYS = ("currency", "currencyCode", "currency_code", "moeda")
+
 
 def _walk_values(obj: Any):
     if isinstance(obj, dict):
@@ -74,7 +98,7 @@ def _normalize_iata(value: Any) -> str | None:
 
 
 def _normalize_price(value: Any) -> float | None:
-    value = _nested_value(value, ("amount", "total", "value", "price"))
+    value = _nested_value(value, ("amount", "total", "value", "price", "totalPrice"))
     if value is None:
         return None
 
@@ -88,49 +112,105 @@ def _normalize_price(value: Any) -> float | None:
         return None
 
 
-def _extract_offers_from_json(payload: Any) -> list[FlightOffer]:
-    """Extrai ofertas de uma resposta JSON da ConectaAS.
+def _find_price_deep(obj: Any) -> float | None:
+    """Procura preço dentro de objetos aninhados da ConectaAS.
 
-    Suporta estruturas aninhadas como:
-    `departure: {iata, date}` e `arrival: {iata, date}`.
+    O preço normalmente fica em um nível acima dos trechos de voo, enquanto os
+    segmentos carregam departure/arrival. Por isso, a busca é recursiva.
     """
+
+    if isinstance(obj, dict):
+        candidates: list[tuple[int, float]] = []
+
+        for key, value in obj.items():
+            key_normalized = str(key).lower().replace("_", "")
+
+            if any(excluded in key_normalized for excluded in PRICE_KEY_EXCLUDES):
+                continue
+
+            if any(hint in key_normalized for hint in PRICE_KEY_HINTS):
+                price = _normalize_price(value)
+                if price is not None and price > 0:
+                    score = 1
+                    if "total" in key_normalized:
+                        score += 3
+                    if "price" in key_normalized or "amount" in key_normalized:
+                        score += 2
+                    candidates.append((score, price))
+
+            nested_price = _find_price_deep(value)
+            if nested_price is not None:
+                candidates.append((1, nested_price))
+
+        if candidates:
+            candidates.sort(key=lambda item: item[0], reverse=True)
+            return candidates[0][1]
+
+    elif isinstance(obj, list):
+        for item in obj:
+            price = _find_price_deep(item)
+            if price is not None:
+                return price
+
+    return None
+
+
+def _find_currency_deep(obj: Any) -> str:
+    if isinstance(obj, dict):
+        direct = _first_value(obj, CURRENCY_KEYS)
+        if direct:
+            return str(direct).upper()[:3]
+
+        for value in obj.values():
+            currency = _find_currency_deep(value)
+            if currency != "BRL":
+                return currency
+
+    elif isinstance(obj, list):
+        for item in obj:
+            currency = _find_currency_deep(item)
+            if currency != "BRL":
+                return currency
+
+    return "BRL"
+
+
+def _segment_to_offer(item: dict[str, Any], price: float | None, currency: str) -> FlightOffer | None:
+    origin_raw = _first_value(item, ("origin", "originCode", "originIata", "departure", "departureCode", "from", "fromIata"))
+    destination_raw = _first_value(item, ("destination", "destinationCode", "destinationIata", "arrival", "arrivalCode", "to", "toIata"))
+    departure_raw = _first_value(item, ("departureDate", "date", "date1", "outboundDate", "departureTime", "departure")) or origin_raw
+
+    origin = _normalize_iata(origin_raw)
+    destination = _normalize_iata(destination_raw)
+    departure_date = _normalize_date(departure_raw)
+
+    if not origin or not destination or not departure_date:
+        return None
+
+    return FlightOffer(
+        origin=origin,
+        destination=destination,
+        departure_date=departure_date,
+        return_date=None,
+        price=price,
+        currency=currency,
+        source_site="ConectaAS",
+        source_url="ConectaAS airAvailability",
+    )
+
+
+def _extract_offers_from_json(payload: Any) -> list[FlightOffer]:
+    """Extrai ofertas de uma resposta JSON da ConectaAS."""
 
     offers: list[FlightOffer] = []
 
-    origin_keys = ("origin", "originCode", "originIata", "departure", "departureCode", "from", "fromIata")
-    destination_keys = ("destination", "destinationCode", "destinationIata", "arrival", "arrivalCode", "to", "toIata")
-    departure_keys = ("departureDate", "date", "date1", "outboundDate", "departureTime", "departure")
-    return_keys = ("returnDate", "date2", "inboundDate")
-    price_keys = ("price", "amount", "total", "totalPrice", "fare", "value")
-    currency_keys = ("currency", "currencyCode")
-
     for item in _walk_values(payload):
-        origin_raw = _first_value(item, origin_keys)
-        destination_raw = _first_value(item, destination_keys)
-        departure_raw = _first_value(item, departure_keys) or origin_raw
+        price = _find_price_deep(item)
+        currency = _find_currency_deep(item)
 
-        origin = _normalize_iata(origin_raw)
-        destination = _normalize_iata(destination_raw)
-        departure_date = _normalize_date(departure_raw)
-        return_date = _normalize_date(_first_value(item, return_keys))
-        price = _normalize_price(_first_value(item, price_keys))
-        currency = str(_first_value(item, currency_keys) or "BRL").upper()[:3]
-
-        if not origin or not destination or not departure_date:
-            continue
-
-        offers.append(
-            FlightOffer(
-                origin=origin,
-                destination=destination,
-                departure_date=departure_date,
-                return_date=return_date,
-                price=price,
-                currency=currency,
-                source_site="ConectaAS",
-                source_url="ConectaAS airAvailability",
-            )
-        )
+        offer = _segment_to_offer(item, price, currency)
+        if offer:
+            offers.append(offer)
 
     return _dedupe_offers(offers)
 
@@ -218,6 +298,8 @@ async def debug_conectaas() -> dict[str, Any]:
         top_level_type = type(payload).__name__
         top_level_keys = []
 
+    priced_offers = [offer for offer in offers if offer.price is not None]
+
     return {
         "configured": True,
         "status_code": response.status_code,
@@ -226,6 +308,7 @@ async def debug_conectaas() -> dict[str, Any]:
         "top_level_type": top_level_type,
         "top_level_keys": top_level_keys,
         "parsed_offers": len(offers),
+        "priced_offers": len(priced_offers),
         "parsed_preview": [offer.model_dump(mode="json") for offer in offers[:10]],
         "payload_preview": payload if isinstance(payload, (dict, list)) else str(payload)[:1000],
     }
