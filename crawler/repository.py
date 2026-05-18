@@ -1,4 +1,4 @@
-from sqlalchemy import desc, insert, select
+from sqlalchemy import delete, desc, insert, select
 
 from crawler.database import flight_offers, get_session_factory, init_db
 from crawler.models import FlightOffer
@@ -13,7 +13,34 @@ async def save_offers(offers: list[FlightOffer]) -> int:
     await init_db()
     session_factory = get_session_factory()
 
-    payload = [
+    payload = _build_payload(offers)
+
+    async with session_factory() as session:
+        await session.execute(insert(flight_offers), payload)
+        await session.commit()
+
+    return len(payload)
+
+
+async def replace_offers(offers: list[FlightOffer]) -> int:
+    """Substitui o feed atual por uma nova coleta limpa."""
+
+    await init_db()
+    session_factory = get_session_factory()
+
+    async with session_factory() as session:
+        await session.execute(delete(flight_offers))
+
+        if offers:
+            await session.execute(insert(flight_offers), _build_payload(offers))
+
+        await session.commit()
+
+    return len(offers)
+
+
+def _build_payload(offers: list[FlightOffer]) -> list[dict]:
+    return [
         {
             "origin": offer.origin,
             "destination": offer.destination,
@@ -27,12 +54,6 @@ async def save_offers(offers: list[FlightOffer]) -> int:
         }
         for offer in offers
     ]
-
-    async with session_factory() as session:
-        await session.execute(insert(flight_offers), payload)
-        await session.commit()
-
-    return len(payload)
 
 
 async def get_latest_offers(limit: int = 50) -> list[FlightOffer]:
