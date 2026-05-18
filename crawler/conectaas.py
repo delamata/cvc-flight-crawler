@@ -47,6 +47,15 @@ PRICE_KEY_EXCLUDES = (
 )
 
 CURRENCY_KEYS = ("currency", "currencyCode", "currency_code", "moeda")
+URL_KEYS = (
+    "urlSearchRedirect",
+    "searchRedirectUrl",
+    "redirectUrl",
+    "deepLink",
+    "deeplink",
+    "url",
+)
+
 PREFERRED_PRICE_KEYS = (
     "minWithTax",
     "min_with_tax",
@@ -102,13 +111,19 @@ def _parse_number(value: Any) -> float | None:
         return float(value)
 
     text = str(value).replace("R$", "").strip()
-    text = text.replace(".", "").replace(",", ".")
-    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    match = re.search(r"-?\d+(?:[\.,]\d+)?", text)
     if not match:
         return None
 
+    number = match.group(0)
+
+    if "," in number and "." in number:
+        number = number.replace(".", "").replace(",", ".")
+    elif "," in number:
+        number = number.replace(",", ".")
+
     try:
-        return float(match.group(0))
+        return float(number)
     except ValueError:
         return None
 
@@ -162,9 +177,42 @@ def _normalize_price(value: Any) -> float | None:
     return _parse_number(value)
 
 
-def _find_price_anywhere(obj: Any) -> float | None:
-    """Busca preço dentro de um subobjeto explicitamente relacionado a preço."""
+def _normalize_url(value: Any) -> str | None:
+    if not value:
+        return None
 
+    url = str(value).strip().strip('"').strip("'")
+    url = url.replace("\\u0026", "&").replace("\u0026", "&")
+    url = url.replace(" ", "+")
+
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+
+    return None
+
+
+def _find_url_local(item: dict[str, Any]) -> str | None:
+    direct = _first_value(item, URL_KEYS)
+    url = _normalize_url(direct)
+    if url:
+        return url
+
+    meta_search = _first_value(item, ("metaSearch", "metasearch"))
+    if isinstance(meta_search, dict):
+        url = _normalize_url(_first_value(meta_search, URL_KEYS))
+        if url:
+            return url
+
+    metadata = _first_value(item, ("metadata",))
+    if isinstance(metadata, dict):
+        url = _normalize_url(_first_value(metadata, URL_KEYS))
+        if url:
+            return url
+
+    return None
+
+
+def _find_price_anywhere(obj: Any) -> float | None:
     if isinstance(obj, dict):
         direct_price = _normalize_price(obj)
         if direct_price is not None and direct_price > 0:
@@ -194,11 +242,8 @@ def _find_price_anywhere(obj: Any) -> float | None:
 
 
 def _find_price_local(item: dict[str, Any]) -> float | None:
-    """Busca preço no objeto atual ou em campos filhos explicitamente de preço."""
-
     candidates: list[tuple[int, float]] = []
 
-    # Caso específico ConectaAS: metadata.price contém minWithTax/minWithoutTax.
     metadata = item.get("metadata")
     if isinstance(metadata, dict):
         metadata_price = _normalize_price(metadata.get("price"))
@@ -268,7 +313,12 @@ def _find_currency_local(item: dict[str, Any]) -> str | None:
     return None
 
 
-def _segment_to_offer(item: dict[str, Any], price: float | None, currency: str) -> FlightOffer | None:
+def _segment_to_offer(
+    item: dict[str, Any],
+    price: float | None,
+    currency: str,
+    source_url: str | None,
+) -> FlightOffer | None:
     origin_raw = _first_value(item, ("origin", "originCode", "originIata", "departure", "departureCode", "from", "fromIata"))
     destination_raw = _first_value(item, ("destination", "destinationCode", "destinationIata", "arrival", "arrivalCode", "to", "toIata"))
     departure_raw = _first_value(item, ("departureDate", "date", "date1", "outboundDate", "departureTime", "departure")) or origin_raw
@@ -287,46 +337,51 @@ def _segment_to_offer(item: dict[str, Any], price: float | None, currency: str) 
         return_date=None,
         price=price,
         currency=currency,
-        source_site="ConectaAS",
-        source_url="ConectaAS airAvailability",
+        source_site="CVC" if source_url and "cvc.com.br" in source_url else "ConectaAS",
+        source_url=source_url or "ConectaAS airAvailability",
     )
 
 
 def _extract_offers_from_json(payload: Any) -> list[FlightOffer]:
-    """Extrai ofertas propagando preço do objeto pai para os segmentos filhos."""
-
     offers: list[FlightOffer] = []
 
-    def visit(obj: Any, inherited_price: float | None = None, inherited_currency: str = "BRL") -> None:
+    def visit(
+        obj: Any,
+        inherited_price: float | None = None,
+        inherited_currency: str = "BRL",
+        inherited_url: str | None = None,
+    ) -> None:
         if isinstance(obj, dict):
             local_price = _find_price_local(obj)
             local_currency = _find_currency_local(obj)
+            local_url = _find_url_local(obj)
 
             current_price = local_price if local_price is not None else inherited_price
             current_currency = local_currency or inherited_currency or "BRL"
+            current_url = local_url or inherited_url
 
-            offer = _segment_to_offer(obj, current_price, current_currency)
+            offer = _segment_to_offer(obj, current_price, current_currency, current_url)
             if offer:
                 offers.append(offer)
                 return
 
             for value in obj.values():
-                visit(value, current_price, current_currency)
+                visit(value, current_price, current_currency, current_url)
 
         elif isinstance(obj, list):
             for item in obj:
-                visit(item, inherited_price, inherited_currency)
+                visit(item, inherited_price, inherited_currency, inherited_url)
 
     visit(payload)
     return _dedupe_offers(offers)
 
 
 def _dedupe_offers(offers: list[FlightOffer]) -> list[FlightOffer]:
-    seen: set[tuple[str, str, str, str | None, float | None]] = set()
+    seen: set[tuple[str, str, str, str | None, float | None, str | None]] = set()
     unique: list[FlightOffer] = []
 
     for offer in offers:
-        key = (offer.origin, offer.destination, offer.departure_date, offer.return_date, offer.price)
+        key = (offer.origin, offer.destination, offer.departure_date, offer.return_date, offer.price, offer.source_url)
         if key in seen:
             continue
         seen.add(key)
@@ -405,6 +460,7 @@ async def debug_conectaas() -> dict[str, Any]:
         top_level_keys = []
 
     priced_offers = [offer for offer in offers if offer.price is not None]
+    cvc_url_offers = [offer for offer in offers if offer.source_url and "cvc.com.br" in offer.source_url]
 
     return {
         "configured": True,
@@ -415,6 +471,7 @@ async def debug_conectaas() -> dict[str, Any]:
         "top_level_keys": top_level_keys,
         "parsed_offers": len(offers),
         "priced_offers": len(priced_offers),
+        "cvc_url_offers": len(cvc_url_offers),
         "parsed_preview": [offer.model_dump(mode="json") for offer in offers[:10]],
         "payload_preview": payload if isinstance(payload, (dict, list)) else str(payload)[:1000],
     }
